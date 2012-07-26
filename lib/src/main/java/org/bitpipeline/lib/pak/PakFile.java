@@ -2,6 +2,8 @@ package org.bitpipeline.lib.pak;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.io.Reader;
 import java.io.StringWriter;
 import java.lang.ref.SoftReference;
 import java.security.cert.Certificate;
@@ -23,7 +25,10 @@ import android.graphics.drawable.Drawable;
 public class PakFile extends JarFile {
 	final boolean verify;
 	final Set<X509Certificate> certificates;
-	private boolean goodSignatures = true;
+	final boolean acceptAllCertificates;
+	private boolean allSigned = false;
+	private boolean allCertificated = false;
+	private boolean tampered = false;
 
 	HashMap<String, SoftReference<Drawable>> drawableCache = new HashMap<String, SoftReference<Drawable>> ();
 	HashMap<String, SoftReference<String>> stringCache = new HashMap<String, SoftReference<String>> ();
@@ -31,10 +36,13 @@ public class PakFile extends JarFile {
 	public PakFile(String name, X509Certificate[] validCerts, boolean verify) throws IOException {
 		super(name, verify);
 		this.verify = verify;
-		if (validCerts == null)
+		if (validCerts == null) {
 			this.certificates = new HashSet<X509Certificate> (0);
-		else
+			this.acceptAllCertificates = true;
+		} else {
 			this.certificates = new HashSet<X509Certificate> (Arrays.asList(validCerts));
+			this.acceptAllCertificates = false;
+		}
 		
 		verifyContent();
 	}
@@ -74,18 +82,14 @@ public class PakFile extends JarFile {
 		
 		if (str == null) {
 			JarEntry e = getJarEntry(entryName);
-			InputStream is = getInputStream(e);
+			Reader isReader = new InputStreamReader (getInputStream(e));
 			StringWriter sw = new StringWriter((int) (e.getCompressedSize()*2));
 			
-			byte[] buffer = new byte[8*1024];
-			char[] test = new char[] {'a', 'b', 'c'};
+			char[] buffer = new char[8*1024];
 			int n = 0;			
-			while ((n = is.read(buffer)) != -1) {
-				sw.write(test, 0, n);
+			while ((n = isReader.read(buffer)) != -1) {
+				sw.write(buffer, 0, n);
 			}
-			
-			if (this.verify)
-				checkEntryCertification(e);
 			
 			str = sw.toString();
 		}
@@ -97,20 +101,28 @@ public class PakFile extends JarFile {
 	}
 	
 	public boolean isSigned () {
-		return this.goodSignatures;
+		return this.allSigned;
 	}
 	
+	/** Check if all the content of the packages is well certified.
+	 * @return <tt>true</tt> if all the content of the package is certified with recognized certificates, <tt>false</tt> otherwise. */
 	public boolean isCertified () {
-		return this.certificates.size() > 0;
+		return this.allCertificated;
 	}
 	
-	private void checkEntryCertification (JarEntry entry) throws SecurityException {
+	public boolean isTampered () {
+		return this.tampered;
+	}
+	
+	private boolean checkEntryCertification (JarEntry entry) throws SecurityException {
 		Certificate[] entryCerts = entry.getCertificates();
 		if (entryCerts != null) {
-			// TODO
-		} else {
-			// TODO
-		}		
+			if (this.acceptAllCertificates)
+				return true;
+			// TODO Check the certificates
+			return false;
+		}
+		return false;
 	}
 	
 	private void verifyContent () throws SecurityException, IOException {
@@ -121,6 +133,8 @@ public class PakFile extends JarFile {
 		
 		Manifest manifest = getManifest();
 		Enumeration<JarEntry> entries = super.entries ();
+		this.allCertificated = true;
+		this.allSigned = true;
 		while (entries.hasMoreElements()) {
 			JarEntry entry = entries.nextElement();
 			if (entry.isDirectory()) { // directory don't have signatures 
@@ -132,7 +146,7 @@ public class PakFile extends JarFile {
 
 			Attributes attr = manifest.getAttributes(entry.getName());
 			if (attr == null) {
-				this.goodSignatures = false;
+				this.allSigned = false;
 				continue;
 			}
 
@@ -143,7 +157,7 @@ public class PakFile extends JarFile {
 	            	hasDigest = true;
 			}
 			if (!hasDigest) {
-				this.goodSignatures = false;
+				this.allSigned = false;
 				continue;
 			}
 				
@@ -154,7 +168,7 @@ public class PakFile extends JarFile {
 	                // we just read. this will throw a SecurityException if a signature/digest check fails.
 	            }
 			} catch (SecurityException e) {
-				this.goodSignatures = false;
+				this.tampered = true;
 				continue;
 			} 
 			
@@ -162,40 +176,11 @@ public class PakFile extends JarFile {
 				is.close();
 			
 			try {
-				checkEntryCertification(entry);
+				this.allCertificated &= checkEntryCertification(entry); 
 			} catch (SecurityException e) {
 				System.out.println(entry.getName() + " has a invalid certificate");
 			}
 		}
+		this.allCertificated &= this.allSigned;
 	}
-
-	/**
-	 * @param args
-	 * @throws IOException 
-	 * @throws SecurityException 
-	 */
-	public static void main(String[] args) throws SecurityException, IOException {
-		PakFile pak = null;
-		try {
-			pak = new PakFile ("/home/mtavares/tmp/pak/content.pak", new X509Certificate[0], true);
-		} catch (IOException e) {
-			e.printStackTrace();
-			return;
-		}
-		if (pak.isSigned())
-			System.out.println("Signatures OK");
-		else
-			System.out.println("Signatures NOK");
-		
-		if (pak.isCertified())
-			System.out.println("Certification OK");
-		else
-			System.out.println("Certification NOK");
-	
-		String index = pak.getEntryAsString("index.json");
-		System.out.println("index.json");
-		System.out.println(index);
-		System.out.println("done");
-	}
-
 }
