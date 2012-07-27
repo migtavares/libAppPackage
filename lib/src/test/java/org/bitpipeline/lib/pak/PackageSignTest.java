@@ -35,12 +35,9 @@ public class PackageSignTest extends TestCase {
 		
 		FileInputStream fis = new FileInputStream("src/test/resources/alias.cert");
 		CertificateFactory cf = CertificateFactory.getInstance("X.509");
-		Collection<? extends Certificate> certs = cf.generateCertificates(fis);
-		for (Certificate c : certs) {
-			System.out.println (c);
-		}
+		Certificate sailaCert = cf.generateCertificate(fis);
 		
-		pak = new PakFile ("src/test/resources/package.signed.pak", certs, true);
+		pak = new PakFile ("src/test/resources/package.signed.pak", sailaCert, true);
 		
 		assertTrue ("Contents of package are signed but are reported as not signed.", pak.isSigned ());
 		assertTrue ("Contents of package are certified with valid certification.", pak.isCertified ());
