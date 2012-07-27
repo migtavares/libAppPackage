@@ -6,9 +6,11 @@ import java.io.InputStreamReader;
 import java.io.Reader;
 import java.io.StringWriter;
 import java.lang.ref.SoftReference;
+import java.security.Principal;
 import java.security.cert.Certificate;
 import java.security.cert.X509Certificate;
 import java.util.Arrays;
+import java.util.Collection;
 import java.util.Enumeration;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -24,29 +26,47 @@ import android.graphics.drawable.Drawable;
 
 public class PakFile extends JarFile {
 	final boolean verify;
-	final Set<X509Certificate> certificates;
-	final boolean acceptAllCertificates;
+	final Set<Certificate> trustedCertificates;
+	boolean acceptAllCertificates;
 	private boolean allSigned = false;
 	private boolean allCertificated = false;
 	private boolean tampered = false;
 
+	public interface PakEntryReader<T> {
+		void readEntry (String entryName, InputStream is);
+		T getEntry ();
+	}
+	
 	HashMap<String, SoftReference<Drawable>> drawableCache = new HashMap<String, SoftReference<Drawable>> ();
 	HashMap<String, SoftReference<String>> stringCache = new HashMap<String, SoftReference<String>> ();
 	
-	public PakFile(String name, X509Certificate[] validCerts, boolean verify) throws IOException {
+	public PakFile(String name, boolean verify) throws IOException {
+		this (name, new HashSet<Certificate> (0), verify);
+	}
+
+	public PakFile(String name, Certificate[] validCerts, boolean verify) throws IOException {
+		this (name, Arrays.asList(validCerts), verify);
+	}
+
+	public PakFile(String name, Certificate validCert, boolean verify) throws IOException {
+		this (name, Arrays.asList (new Certificate[]{validCert}), verify);
+	}
+	
+	public PakFile(String name, Collection<? extends Certificate> validCerts, boolean verify) throws IOException {
 		super(name, verify);
 		this.verify = verify;
-		if (validCerts == null) {
-			this.certificates = new HashSet<X509Certificate> (0);
+		if (validCerts.size () == 0) {
+			this.trustedCertificates = new HashSet<Certificate> (0);
 			this.acceptAllCertificates = true;
 		} else {
-			this.certificates = new HashSet<X509Certificate> (Arrays.asList(validCerts));
+			this.trustedCertificates = new HashSet<Certificate> (validCerts);
 			this.acceptAllCertificates = false;
 		}
 		
 		verifyContent();
 	}
-
+	
+	
 	/** Get's a Drawable from a app package entry.
 	 * Uses a cache of drawables (using SoftReference).
 	 * @param entryName the name of the entry that contains a drawable. 
@@ -119,12 +139,36 @@ public class PakFile extends JarFile {
 		if (entryCerts != null) {
 			if (this.acceptAllCertificates)
 				return true;
-			// TODO Check the certificates
+
+			for (Certificate c : entryCerts) {
+				if (PakFile.isTrusted (c, this.trustedCertificates))
+					return true;
+			}
 			return false;
 		}
 		return false;
 	}
 	
+	/** Check if a certificate is trusted.
+	 * @param cert is the X509 certificate to check for trust
+	 * @param trustedCert is the set of certificates that are trusted. */
+	public static boolean isTrusted (Certificate cert, Set<Certificate> trustedCerts) {
+		if (!(cert instanceof X509Certificate))
+			return false;
+		X509Certificate x509cert = (X509Certificate) cert;
+		
+		Principal certSubjectDN = x509cert.getSubjectDN ();
+		if (certSubjectDN == null)
+			return false;
+		
+		for (Certificate trustedCert : trustedCerts) {
+			if (cert.equals (trustedCert))
+				return true;
+		}
+		return false;
+	}
+	
+	/** Verify the content of the pak file. */
 	private void verifyContent () throws SecurityException, IOException {
 		if (!this.verify)
 			return;
